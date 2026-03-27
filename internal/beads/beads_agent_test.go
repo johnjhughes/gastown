@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,85 @@ esac
 	t.Setenv("MOCK_BD_SHOW_OUTPUT", showOutput)
 }
 
+func installMockBDAgentStateRecorder(t *testing.T, showOutput string) string {
+	t.Helper()
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "bd.log")
+
+	if runtime.GOOS == "windows" {
+		psPath := filepath.Join(binDir, "bd.ps1")
+		psScript := `# Mock bd for agent state tests.
+$logFile = '` + strings.ReplaceAll(logPath, "'", "''") + `'
+Add-Content -Path $logFile -Value ($args -join ' ')
+
+$cmd = ''
+foreach ($arg in $args) {
+  if ($arg -like '--*') { continue }
+  $cmd = $arg
+  break
+}
+
+switch ($cmd) {
+  'version' { exit 0 }
+  'show' {
+    Write-Output $env:MOCK_BD_SHOW_OUTPUT
+    exit 0
+  }
+  'sql' { exit 0 }
+  'update' { exit 0 }
+  default { exit 0 }
+}
+`
+		cmdScript := "@echo off\r\npwsh -NoProfile -NoLogo -File \"" + psPath + "\" %*\r\n"
+		if err := os.WriteFile(psPath, []byte(psScript), 0644); err != nil {
+			t.Fatalf("write mock bd ps1: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(binDir, "bd.cmd"), []byte(cmdScript), 0644); err != nil {
+			t.Fatalf("write mock bd cmd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("MOCK_BD_SHOW_OUTPUT", showOutput)
+		return logPath
+	}
+
+	script := `#!/bin/sh
+LOG_FILE='` + logPath + `'
+printf '%s\n' "$*" >> "$LOG_FILE"
+
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+case "$cmd" in
+  version)
+    exit 0
+    ;;
+  show)
+    printf '%s\n' "$MOCK_BD_SHOW_OUTPUT"
+    exit 0
+    ;;
+  sql|update)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MOCK_BD_SHOW_OUTPUT", showOutput)
+	return logPath
+}
+
 func TestGetAgentBead_PrefersStructuredAgentState(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
@@ -115,6 +195,39 @@ func TestGetAgentBead_FallsBackToDescriptionAgentState(t *testing.T) {
 	}
 	if fields.AgentState != "spawning" {
 		t.Fatalf("fields.AgentState = %q, want %q", fields.AgentState, "spawning")
+	}
+}
+
+func TestUpdateAgentState_UsesSQLNotRemovedAgentSubcommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+
+	logPath := installMockBDAgentStateRecorder(t, `[{"id":"gt-gastown-polecat-nux","title":"Polecat nux","issue_type":"agent","labels":["gt:agent"],"description":"role_type: polecat\nrig: gastown\nagent_state: spawning\nhook_bead: null"}]`)
+
+	bd := NewIsolated(tmpDir)
+	if err := bd.UpdateAgentState("gt-gastown-polecat-nux", "working"); err != nil {
+		t.Fatalf("UpdateAgentState: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read mock bd log: %v", err)
+	}
+	log := string(logBytes)
+
+	if strings.Contains(log, "agent state") {
+		t.Fatalf("log contains removed bd agent state command:\n%s", log)
+	}
+	if !strings.Contains(log, "sql UPDATE issues SET agent_state = 'working' WHERE id = 'gt-gastown-polecat-nux'") {
+		t.Fatalf("log missing issues table state sync:\n%s", log)
+	}
+	if !strings.Contains(log, "sql UPDATE wisps SET agent_state = 'working' WHERE id = 'gt-gastown-polecat-nux'") {
+		t.Fatalf("log missing wisps table state sync:\n%s", log)
+	}
+	if !strings.Contains(log, "update gt-gastown-polecat-nux") {
+		t.Fatalf("log missing description sync update:\n%s", log)
 	}
 }
 

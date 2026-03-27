@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 func TestParseRigSlashName(t *testing.T) {
@@ -47,7 +49,7 @@ func TestInferRigFromCrewName(t *testing.T) {
 	mkdirAll("rigA/crew/alice")
 	mkdirAll("rigA/crew/bob")
 	mkdirAll("rigB/crew/carol")
-	mkdirAll("rigB/crew/bob")   // bob exists in both rigs
+	mkdirAll("rigB/crew/bob")     // bob exists in both rigs
 	mkdirAll(".hidden/crew/dave") // hidden dir, should be skipped
 
 	// Create a non-dir entry at town root
@@ -102,5 +104,31 @@ func TestIsShellCommand(t *testing.T) {
 				t.Errorf("isShellCommand(%q) = %v, want %v", tt.cmd, got, tt.expect)
 			}
 		})
+	}
+}
+
+func TestBuildAttachTmuxArgsUsesGTTmuxSocketFallback(t *testing.T) {
+	origSocket := tmux.GetDefaultSocket()
+	origTownSocket := os.Getenv("GT_TOWN_SOCKET")
+	origTmuxSocket := os.Getenv("GT_TMUX_SOCKET")
+	defer func() {
+		tmux.SetDefaultSocket(origSocket)
+		_ = os.Setenv("GT_TOWN_SOCKET", origTownSocket)
+		_ = os.Setenv("GT_TMUX_SOCKET", origTmuxSocket)
+	}()
+
+	tmux.SetDefaultSocket("")
+	_ = os.Setenv("GT_TOWN_SOCKET", "")
+	_ = os.Setenv("GT_TMUX_SOCKET", "gt")
+
+	args := buildAttachTmuxArgs("hq-mayor", false)
+	expected := []string{"tmux", "-u", "-L", "gt", "attach-session", "-t", "hq-mayor"}
+	if len(args) != len(expected) {
+		t.Fatalf("args = %v, want %v", args, expected)
+	}
+	for i, a := range args {
+		if a != expected[i] {
+			t.Fatalf("args[%d] = %q, want %q", i, a, expected[i])
+		}
 	}
 }

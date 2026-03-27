@@ -135,12 +135,30 @@ func init() {
 	rootCmd.AddCommand(mayorCmd)
 }
 
+// ensureMayorCommandContext loads town-specific env and initializes the tmux/session
+// registry for mayor commands. This hardens mayor entry points that may be
+// invoked from shells where persistentPreRun could not resolve the town first.
+func ensureMayorCommandContext(townRoot string) {
+	if patrolCfg := daemon.LoadPatrolConfig(townRoot); patrolCfg != nil {
+		for k, v := range patrolCfg.Env {
+			_ = os.Setenv(k, v)
+		}
+	}
+	_ = os.Setenv("GT_TOWN_ROOT", townRoot)
+	_ = os.Setenv("GT_ROOT", townRoot)
+
+	if err := session.InitRegistry(townRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: failed to initialize mayor town registry: %v\n", err)
+	}
+}
+
 // getMayorManager returns a mayor manager for the current workspace.
 func getMayorManager() (*mayor.Manager, error) {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return nil, fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
+	ensureMayorCommandContext(townRoot)
 	return mayor.NewManager(townRoot), nil
 }
 
@@ -325,6 +343,7 @@ func runMayorStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	ensureMayorCommandContext(townRoot)
 
 	mgr := mayor.NewManager(townRoot)
 	status, err := mgr.CombinedStatus()

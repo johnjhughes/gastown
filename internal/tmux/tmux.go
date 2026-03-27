@@ -123,6 +123,26 @@ func GetDefaultSocket() string {
 	return defaultSocket
 }
 
+// EffectiveSocket returns the tmux socket this process should target.
+// Resolution order:
+//  1. Process-initialized default socket (session.InitRegistry)
+//  2. GT_TMUX_SOCKET from shell integration / town sessions
+//  3. GT_TOWN_SOCKET from cross-socket tmux bindings
+//
+// Empty string means "use the tmux default socket".
+func EffectiveSocket() string {
+	if sock := GetDefaultSocket(); sock != "" {
+		return sock
+	}
+	if sock := os.Getenv("GT_TMUX_SOCKET"); sock != "" && sock != "default" && sock != "auto" {
+		return sock
+	}
+	if sock := os.Getenv("GT_TOWN_SOCKET"); sock != "" {
+		return sock
+	}
+	return ""
+}
+
 // SocketDir returns the directory where tmux stores its socket files.
 // On macOS, tmux uses /tmp (not $TMPDIR which points to /var/folders/...),
 // so we must use /tmp directly rather than os.TempDir().
@@ -142,7 +162,7 @@ func IsInSameSocket() bool {
 	parts := strings.SplitN(tmuxEnv, ",", 2)
 	currentSocket := filepath.Base(parts[0])
 
-	targetSocket := GetDefaultSocket()
+	targetSocket := EffectiveSocket()
 	if targetSocket == "" {
 		targetSocket = "default"
 	}
@@ -158,7 +178,7 @@ func BuildCommand(args ...string) *exec.Cmd {
 // BuildCommandContext is like BuildCommand but honors a context for cancellation.
 func BuildCommandContext(ctx context.Context, args ...string) *exec.Cmd {
 	allArgs := []string{"-u"}
-	if sock := GetDefaultSocket(); sock != "" {
+	if sock := EffectiveSocket(); sock != "" {
 		allArgs = append(allArgs, "-L", sock)
 	}
 	allArgs = append(allArgs, args...)
@@ -185,13 +205,7 @@ const EnvAgentReady = "GT_AGENT_READY"
 // Falls back to GT_TOWN_SOCKET env var (set by cross-socket tmux bindings).
 // Empty socket means use the default tmux server.
 func NewTmux() *Tmux {
-	sock := GetDefaultSocket()
-	if sock == "" {
-		// GT_TOWN_SOCKET is embedded in tmux bindings created by EnsureBindingsOnSocket
-		// so that "gt agents menu" / "gt feed" invoked from a personal terminal still
-		// target the correct town server even when InitRegistry was not called.
-		sock = os.Getenv("GT_TOWN_SOCKET")
-	}
+	sock := EffectiveSocket()
 	return &Tmux{socketName: sock}
 }
 
@@ -1215,7 +1229,6 @@ func nudgeFlockPath(townRoot, session string) string {
 	return filepath.Join(townRoot, constants.DirRuntime, "nudge_queue", safe, ".lock")
 }
 
-
 // IsSessionAttached returns true if the session has any clients attached.
 func (t *Tmux) IsSessionAttached(target string) bool {
 	attached, err := t.run("display-message", "-t", target, "-p", "#{session_attached}")
@@ -1376,9 +1389,9 @@ func (t *Tmux) dismissRewindMode(target string) {
 // Falls back to best-effort (no verification) if pane capture fails.
 func (t *Tmux) sendEnterVerified(target string) error {
 	const (
-		maxRetries       = 3
-		initialBackoff   = 500 * time.Millisecond
-		verifyLines      = 5 // capture last N lines for comparison
+		maxRetries     = 3
+		initialBackoff = 500 * time.Millisecond
+		verifyLines    = 5 // capture last N lines for comparison
 	)
 
 	// Snapshot pane content before Enter so we can detect processing.

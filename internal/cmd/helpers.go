@@ -121,23 +121,26 @@ func attachToTmuxSession(sessionID string) error {
 		return fmt.Errorf("tmux not found: %w", err)
 	}
 
-	// Base args with UTF-8 and socket support
-	baseArgs := []string{"tmux", "-u"}
-	if socket := tmux.GetDefaultSocket(); socket != "" {
-		baseArgs = append(baseArgs, "-L", socket)
-	}
-
-	var args []string
-	if isInSameTmuxSocket() {
-		// Same tmux socket: switch to the target session
-		args = append(baseArgs, "switch-client", "-t", sessionID)
-	} else {
-		// Outside tmux or different socket: attach to the session
-		args = append(baseArgs, "attach-session", "-t", sessionID)
-	}
+	args := buildAttachTmuxArgs(sessionID, isInSameTmuxSocket())
 
 	// Replace the Go process with tmux for direct terminal control
 	return syscall.Exec(tmuxPath, args, os.Environ())
+}
+
+func buildAttachTmuxArgs(sessionID string, sameSocket bool) []string {
+	// Base args with UTF-8 and socket support
+	baseArgs := []string{"tmux", "-u"}
+	if socket := tmux.EffectiveSocket(); socket != "" {
+		baseArgs = append(baseArgs, "-L", socket)
+	}
+
+	if sameSocket {
+		// Same tmux socket: switch to the target session
+		return append(baseArgs, "switch-client", "-t", sessionID)
+	}
+
+	// Outside tmux or different socket: attach to the session
+	return append(baseArgs, "attach-session", "-t", sessionID)
 }
 
 // isShellCommand checks if the command is a shell (meaning the runtime has exited).

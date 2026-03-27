@@ -13,6 +13,9 @@ import (
 func (b *Beads) CreateDogAgentBead(name, location string) (*Issue, error) {
 	title := fmt.Sprintf("Dog: %s", name)
 	beadID := DogBeadIDTown(name) // Use canonical ID: hq-dog-<name>
+	targetDir := ResolveRoutingTarget(b.getTownRoot(), beadID, b.getResolvedBeadsDir())
+	_ = EnsureCustomTypes(targetDir)
+
 	labels := []string{
 		"gt:agent",
 		"role_type:dog",
@@ -39,7 +42,11 @@ func (b *Beads) CreateDogAgentBead(name, location string) (*Issue, error) {
 
 	out, err := b.run(args...)
 	if err != nil {
-		return nil, err
+		_ = EnsureCustomTypes(targetDir)
+		out, err = b.run(args...)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var issue Issue
@@ -112,4 +119,3 @@ func formatDogDescription(name, location string) string {
 		fmt.Sprintf("location: %s", location),
 	}, "\n")
 }
-
