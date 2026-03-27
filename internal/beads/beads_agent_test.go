@@ -198,7 +198,7 @@ func TestGetAgentBead_FallsBackToDescriptionAgentState(t *testing.T) {
 	}
 }
 
-func TestUpdateAgentState_UsesSQLNotRemovedAgentSubcommand(t *testing.T) {
+func TestUpdateAgentState_DoesNotUseRemovedAgentSubcommand(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
 		t.Fatalf("mkdir .beads: %v", err)
@@ -220,11 +220,8 @@ func TestUpdateAgentState_UsesSQLNotRemovedAgentSubcommand(t *testing.T) {
 	if strings.Contains(log, "agent state") {
 		t.Fatalf("log contains removed bd agent state command:\n%s", log)
 	}
-	if !strings.Contains(log, "sql UPDATE issues SET agent_state = 'working' WHERE id = 'gt-gastown-polecat-nux'") {
-		t.Fatalf("log missing issues table state sync:\n%s", log)
-	}
-	if !strings.Contains(log, "sql UPDATE wisps SET agent_state = 'working' WHERE id = 'gt-gastown-polecat-nux'") {
-		t.Fatalf("log missing wisps table state sync:\n%s", log)
+	if !strings.Contains(log, "set-state gt-gastown-polecat-nux agent_state=working") {
+		t.Fatalf("log missing set-state update:\n%s", log)
 	}
 	if !strings.Contains(log, "update gt-gastown-polecat-nux") {
 		t.Fatalf("log missing description sync update:\n%s", log)
