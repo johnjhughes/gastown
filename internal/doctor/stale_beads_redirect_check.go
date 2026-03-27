@@ -287,8 +287,13 @@ func hasRedirectWithStaleFiles(beadsDir string) bool {
 		return false
 	}
 
+	preserveMetadata := metadataHasDoltDB(beadsDir)
+
 	// Check for any stale files
 	for _, pattern := range staleFilePatterns {
+		if preserveMetadata && pattern == "metadata.json" {
+			continue
+		}
 		matches, err := filepath.Glob(filepath.Join(beadsDir, pattern))
 		if err != nil {
 			continue

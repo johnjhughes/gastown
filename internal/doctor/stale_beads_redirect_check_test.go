@@ -385,6 +385,34 @@ func TestStaleBeadsRedirectCheck_TrackedBeadsArchitecture(t *testing.T) {
 	}
 }
 
+func TestStaleBeadsRedirectCheck_MetadataWithDoltDBNotFlagged(t *testing.T) {
+	townRoot := t.TempDir()
+	rigDir := filepath.Join(townRoot, "myrig")
+	beadsDir := filepath.Join(rigDir, ".beads")
+
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "redirect"), []byte("../mayor/rig/.beads\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"dolt_database":"myrig"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rigDir, ".git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	check := NewStaleBeadsRedirectCheck()
+	ctx := &CheckContext{TownRoot: townRoot}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusOK {
+		t.Errorf("Expected StatusOK for redirect with preserved metadata.json, got %v: %s", result.Status, result.Message)
+	}
+}
+
 func TestStaleBeadsRedirectCheck_IncorrectRedirect(t *testing.T) {
 	// Create temp town with incorrect redirect
 	townRoot := t.TempDir()

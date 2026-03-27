@@ -38,6 +38,11 @@ func TestClaudeSettingsCheck_NoSettingsFiles(t *testing.T) {
 // The filename should be settings.json for valid tests.
 func createValidSettings(t *testing.T, path string) {
 	t.Helper()
+	createValidSettingsWithStopCommand(t, path, "gt costs record --session $CLAUDE_SESSION_ID")
+}
+
+func createValidSettingsWithStopCommand(t *testing.T, path, stopCommand string) {
+	t.Helper()
 
 	settings := map[string]any{
 		"enabledPlugins": []string{"plugin1"},
@@ -59,7 +64,7 @@ func createValidSettings(t *testing.T, path string) {
 					"hooks": []any{
 						map[string]any{
 							"type":    "command",
-							"command": "gt costs record --session $CLAUDE_SESSION_ID",
+							"command": stopCommand,
 						},
 					},
 				},
@@ -262,6 +267,23 @@ func TestClaudeSettingsCheck_ValidPolecatSettings(t *testing.T) {
 
 	if result.Status != StatusOK {
 		t.Errorf("expected StatusOK for valid polecat settings, got %v: %s", result.Status, result.Message)
+	}
+}
+
+func TestClaudeSettingsCheck_ValidPolecatSettingsWithPolecatStopCheck(t *testing.T) {
+	tmpDir := t.TempDir()
+	rigName := "testrig"
+
+	pcSettings := filepath.Join(tmpDir, rigName, "polecats", ".claude", "settings.json")
+	createValidSettingsWithStopCommand(t, pcSettings, "gt tap polecat-stop-check")
+
+	check := NewClaudeSettingsCheck()
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusOK {
+		t.Errorf("expected StatusOK for polecat stop-check settings, got %v: %s", result.Status, result.Message)
 	}
 }
 

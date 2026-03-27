@@ -34,14 +34,14 @@ type ClaudeSettingsCheck struct {
 }
 
 type staleSettingsInfo struct {
-	path           string        // Full path to settings file
-	agentType      string        // e.g., "witness", "refinery", "deacon", "mayor"
-	rigName        string        // Rig name (empty for town-level agents)
-	sessionName    string        // tmux session name for cycling
-	missing        []string      // What's missing from the settings
-	wrongLocation  bool          // True if file is in wrong location (should be deleted)
-	missingFile    bool          // True if settings.local.json doesn't exist (needs agent restart)
-	gitStatus      gitFileStatus // Git status for wrong-location files (for safe deletion)
+	path          string        // Full path to settings file
+	agentType     string        // e.g., "witness", "refinery", "deacon", "mayor"
+	rigName       string        // Rig name (empty for town-level agents)
+	sessionName   string        // tmux session name for cycling
+	missing       []string      // What's missing from the settings
+	wrongLocation bool          // True if file is in wrong location (should be deleted)
+	missingFile   bool          // True if settings.local.json doesn't exist (needs agent restart)
+	gitStatus     gitFileStatus // Git status for wrong-location files (for safe deletion)
 }
 
 // NewClaudeSettingsCheck creates a new Claude settings validation check.
@@ -403,9 +403,9 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			crewCorrectSettings := filepath.Join(crewDir, ".claude", "settings.json")
 			if fileExists(crewCorrectSettings) {
 				files = append(files, staleSettingsInfo{
-					path:        crewCorrectSettings,
-					agentType:   "crew",
-					rigName:     rigName,
+					path:      crewCorrectSettings,
+					agentType: "crew",
+					rigName:   rigName,
 				})
 			} else {
 				files = append(files, staleSettingsInfo{
@@ -459,9 +459,9 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 			polecatCorrectSettings := filepath.Join(polecatsDir, ".claude", "settings.json")
 			if fileExists(polecatCorrectSettings) {
 				files = append(files, staleSettingsInfo{
-					path:        polecatCorrectSettings,
-					agentType:   "polecat",
-					rigName:     rigName,
+					path:      polecatCorrectSettings,
+					agentType: "polecat",
+					rigName:   rigName,
 				})
 			} else {
 				files = append(files, staleSettingsInfo{
@@ -528,8 +528,7 @@ func (c *ClaudeSettingsCheck) findSettingsFiles(townRoot string) []staleSettings
 
 // checkSettings compares a settings file against the expected template.
 // Returns a list of what's missing.
-// agentType is reserved for future role-specific validation.
-func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
+func (c *ClaudeSettingsCheck) checkSettings(path, agentType string) []string {
 	var missing []string
 
 	// Read the actual settings
@@ -564,12 +563,23 @@ func (c *ClaudeSettingsCheck) checkSettings(path, _ string) []string {
 		missing = append(missing, "PATH export")
 	}
 
-	// Check Stop hook exists with gt costs record (for all roles)
-	if !c.hookHasPattern(hooks, "Stop", "gt costs record") {
+	// Polecats use gt tap polecat-stop-check as their managed Stop hook.
+	// Other roles still use gt costs record directly.
+	if !c.stopHookIsValid(hooks, agentType) {
 		missing = append(missing, "Stop hook")
 	}
 
 	return missing
+}
+
+func (c *ClaudeSettingsCheck) stopHookIsValid(hooks map[string]any, agentType string) bool {
+	if c.hookHasPattern(hooks, "Stop", "gt costs record") {
+		return true
+	}
+	if agentType == "polecat" && c.hookHasPattern(hooks, "Stop", "gt tap polecat-stop-check") {
+		return true
+	}
+	return false
 }
 
 // getGitFileStatus determines the git status of a file.
