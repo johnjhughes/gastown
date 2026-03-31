@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 const (
@@ -31,15 +32,15 @@ const (
 // testPollutionPatterns matches issue IDs or titles that indicate test data leaked
 // into production exports. These records are filtered out before writing JSONL.
 var testPollutionPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)^Test Issue`),                              // title: "Test Issue ..."
-	regexp.MustCompile(`(?i)^test[_\s]`),                               // title: "test_something" or "test something"
-	regexp.MustCompile(`^bd-[0-9]{1,2}$`),                              // id: bd-1, bd-99 (suspiciously short IDs)
-	regexp.MustCompile(`^bd-[a-z]{3,5}[0-9]{1,2}$`),                   // id: bd-abc12 (test-style IDs)
-	regexp.MustCompile(`^(testdb_|beads_t|beads_pt|doctest_)`),         // id prefixes from test databases
-	regexp.MustCompile(`(?i)^--help`),                                  // title: "--help" CLI artifacts
-	regexp.MustCompile(`(?i)^Usage:\s`),                                // title: "Usage: ..." CLI help output
-	regexp.MustCompile(`^offlinebrew-`),                                // id: offlinebrew-* test prefixes
-	regexp.MustCompile(`-wisp-`),                                       // id: wisp-pattern IDs leaked into issues table
+	regexp.MustCompile(`(?i)^Test Issue`),                      // title: "Test Issue ..."
+	regexp.MustCompile(`(?i)^test[_\s]`),                       // title: "test_something" or "test something"
+	regexp.MustCompile(`^bd-[0-9]{1,2}$`),                      // id: bd-1, bd-99 (suspiciously short IDs)
+	regexp.MustCompile(`^bd-[a-z]{3,5}[0-9]{1,2}$`),            // id: bd-abc12 (test-style IDs)
+	regexp.MustCompile(`^(testdb_|beads_t|beads_pt|doctest_)`), // id prefixes from test databases
+	regexp.MustCompile(`(?i)^--help`),                          // title: "--help" CLI artifacts
+	regexp.MustCompile(`(?i)^Usage:\s`),                        // title: "Usage: ..." CLI help output
+	regexp.MustCompile(`^offlinebrew-`),                        // id: offlinebrew-* test prefixes
+	regexp.MustCompile(`-wisp-`),                               // id: wisp-pattern IDs leaked into issues table
 }
 
 // validDBName matches safe database names (alphanumeric, underscore, hyphen).
@@ -91,12 +92,7 @@ func (d *Daemon) syncJsonlGitBackup() {
 	// Resolve git repo path.
 	gitRepo := config.GitRepo
 	if gitRepo == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			d.logger.Printf("jsonl_git_backup: cannot determine home dir: %v", err)
-			return
-		}
-		gitRepo = filepath.Join(homeDir, ".dolt-archive", "git")
+		gitRepo = workspace.JSONLGitBackupRepo(d.config.TownRoot)
 	}
 
 	// Verify git repo exists.

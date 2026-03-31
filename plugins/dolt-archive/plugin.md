@@ -31,9 +31,10 @@ whether the other layers work.
 ## Config
 
 ```bash
-DOLT_DATA_DIR="$GT_TOWN_ROOT/.dolt-data"
+DOLT_DATA_DIR="${DOLT_DATA_DIR:-$GT_TOWN_ROOT/.dolt-data}"
 PROD_DBS=("hq" "gt" "mo")
-JSONL_EXPORT_DIR="$GT_TOWN_ROOT/.dolt-archive/jsonl"
+JSONL_EXPORT_DIR="${JSONL_EXPORT_DIR:-$GT_TOWN_ROOT/.dolt-archive/jsonl}"
+BACKUP_REPO="${BACKUP_REPO:-$GT_TOWN_ROOT/.dolt-archive/git}"
 DOLT_HOST="127.0.0.1"
 DOLT_PORT=3307
 DOLT_USER="root"
@@ -107,7 +108,7 @@ echo "=== Git Push ==="
 GIT_PUSHED=false
 
 # Check if we have a git backup repo configured
-BACKUP_REPO="$HOME/gt/.dolt-archive/git"
+BACKUP_REPO="${BACKUP_REPO:-$GT_TOWN_ROOT/.dolt-archive/git}"
 
 if [ -d "$BACKUP_REPO/.git" ]; then
   cd "$BACKUP_REPO"
