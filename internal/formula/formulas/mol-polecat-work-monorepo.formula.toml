@@ -350,8 +350,11 @@ git log origin/{{base_branch}}..HEAD --oneline
 This MUST show at least 1 commit. If it shows NOTHING:
 - You have NOT completed your implementation. Do NOT close this step.
 - Go back to the implement step and do the work.
-- If the task genuinely requires no code changes (already fixed upstream, etc.),
-  run `gt done --status DEFERRED` and skip remaining steps.
+- If the task genuinely requires no code changes because there is nothing to land
+  (already fixed upstream, can't reproduce, not applicable), run
+  `gt done --status DEFERRED` and skip remaining steps.
+- If this is a report-only task with findings persisted to the bead, continue
+  to cleanup; `gt done --cleanup-status clean` handles the no-commit case.
 - Do NOT proceed to cleanup or submit with zero commits.
 
 **5. VERIFY clean working tree:**

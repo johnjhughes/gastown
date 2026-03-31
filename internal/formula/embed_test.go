@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -263,6 +264,41 @@ func TestCheckFormulaHealth_Outdated(t *testing.T) {
 	embeddedHash := embedded[targetFormula]
 	if embeddedHash == installed.Formulas[targetFormula] {
 		t.Error("embedded hash should differ from installed hash for this test")
+	}
+}
+
+func TestPolecatWorkFormulasUseCleanCompletionForReportOnlyTasks(t *testing.T) {
+	tests := []struct {
+		name               string
+		forbiddenReportCmd string
+	}{
+		{
+			name:               "mol-polecat-work",
+			forbiddenReportCmd: "# For report-only tasks (no commits — audits, reviews, research):\ngt done --status DEFERRED",
+		},
+		{
+			name:               "mol-polecat-work-monorepo",
+			forbiddenReportCmd: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := GetEmbeddedFormulaContent(tt.name)
+			if err != nil {
+				t.Fatalf("GetEmbeddedFormulaContent(%s) error: %v", tt.name, err)
+			}
+			text := string(content)
+			if !strings.Contains(text, "gt done --cleanup-status clean") {
+				t.Fatalf("%s should instruct report-only tasks to use gt done --cleanup-status clean", tt.name)
+			}
+			if !strings.Contains(text, "If the task genuinely requires no code changes because there is nothing to land") {
+				t.Fatalf("%s should distinguish report-only work from true no-op/deferred exits", tt.name)
+			}
+			if tt.forbiddenReportCmd != "" && strings.Contains(text, tt.forbiddenReportCmd) {
+				t.Fatalf("%s still tells report-only tasks to use gt done --status DEFERRED", tt.name)
+			}
+		})
 	}
 }
 
