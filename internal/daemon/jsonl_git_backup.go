@@ -25,6 +25,7 @@ const (
 	jsonlExportTimeout            = 60 * time.Second
 	gitPushTimeout                = 120 * time.Second
 	gitCmdTimeout                 = 30 * time.Second
+	staleGitIndexLockAge          = 10 * time.Minute
 	maxConsecutivePushFailures    = 3
 	defaultSpikeThreshold         = 0.50 // 50% delta triggers halt (was 20%, too sensitive for bulk ops)
 )
@@ -32,15 +33,15 @@ const (
 // testPollutionPatterns matches issue IDs or titles that indicate test data leaked
 // into production exports. These records are filtered out before writing JSONL.
 var testPollutionPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)^Test Issue`),                              // title: "Test Issue ..."
-	regexp.MustCompile(`(?i)^test[_\s]`),                               // title: "test_something" or "test something"
-	regexp.MustCompile(`^bd-[0-9]{1,2}$`),                              // id: bd-1, bd-99 (suspiciously short IDs)
-	regexp.MustCompile(`^bd-[a-z]{3,5}[0-9]{1,2}$`),                   // id: bd-abc12 (test-style IDs)
-	regexp.MustCompile(`^(testdb_|beads_t|beads_pt|doctest_)`),         // id prefixes from test databases
-	regexp.MustCompile(`(?i)^--help`),                                  // title: "--help" CLI artifacts
-	regexp.MustCompile(`(?i)^Usage:\s`),                                // title: "Usage: ..." CLI help output
-	regexp.MustCompile(`^offlinebrew-`),                                // id: offlinebrew-* test prefixes
-	regexp.MustCompile(`-wisp-`),                                       // id: wisp-pattern IDs leaked into issues table
+	regexp.MustCompile(`(?i)^Test Issue`),                      // title: "Test Issue ..."
+	regexp.MustCompile(`(?i)^test[_\s]`),                       // title: "test_something" or "test something"
+	regexp.MustCompile(`^bd-[0-9]{1,2}$`),                      // id: bd-1, bd-99 (suspiciously short IDs)
+	regexp.MustCompile(`^bd-[a-z]{3,5}[0-9]{1,2}$`),            // id: bd-abc12 (test-style IDs)
+	regexp.MustCompile(`^(testdb_|beads_t|beads_pt|doctest_)`), // id prefixes from test databases
+	regexp.MustCompile(`(?i)^--help`),                          // title: "--help" CLI artifacts
+	regexp.MustCompile(`(?i)^Usage:\s`),                        // title: "Usage: ..." CLI help output
+	regexp.MustCompile(`^offlinebrew-`),                        // id: offlinebrew-* test prefixes
+	regexp.MustCompile(`-wisp-`),                               // id: wisp-pattern IDs leaked into issues table
 }
 
 // validDBName matches safe database names (alphanumeric, underscore, hyphen).
@@ -436,8 +437,74 @@ func (d *Daemon) currentGitBranch(gitRepo string) string {
 	return strings.TrimSpace(stdout.String())
 }
 
+func gitIndexLockPath(gitRepo string) string {
+	return filepath.Join(gitRepo, ".git", "index.lock")
+}
+
+func isGitIndexLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "index.lock") && strings.Contains(msg, "File exists")
+}
+
+// recoverStaleGitIndexLock removes a stale git index lock left behind by a
+// crashed git process. The age guard avoids tearing out a fresh lock from an
+// active writer.
+func (d *Daemon) recoverStaleGitIndexLock(gitRepo string) (bool, error) {
+	lockPath := gitIndexLockPath(gitRepo)
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat %s: %w", lockPath, err)
+	}
+
+	lockAge := time.Since(info.ModTime())
+	if lockAge < staleGitIndexLockAge {
+		return false, nil
+	}
+
+	if err := os.Remove(lockPath); err != nil {
+		return false, fmt.Errorf("remove stale %s: %w", lockPath, err)
+	}
+
+	d.logger.Printf(
+		"jsonl_git_backup: removed stale git index lock %s (age=%s)",
+		lockPath,
+		lockAge.Round(time.Second),
+	)
+	return true, nil
+}
+
 // runGitCmd runs a git command in the specified directory with the given timeout.
 func (d *Daemon) runGitCmd(dir string, timeout time.Duration, args ...string) error {
+	if err := d.runGitCmdOnce(dir, timeout, args...); err != nil {
+		if !isGitIndexLockError(err) {
+			return err
+		}
+
+		recovered, recoveryErr := d.recoverStaleGitIndexLock(dir)
+		if recoveryErr != nil {
+			return fmt.Errorf("%w (stale-lock recovery failed: %v)", err, recoveryErr)
+		}
+		if !recovered {
+			return err
+		}
+
+		d.logger.Printf(
+			"jsonl_git_backup: retrying git command after stale lock recovery: git -C %s %s",
+			dir,
+			strings.Join(args, " "),
+		)
+		return d.runGitCmdOnce(dir, timeout, args...)
+	}
+	return nil
+}
+
+func (d *Daemon) runGitCmdOnce(dir string, timeout time.Duration, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

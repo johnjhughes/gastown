@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsTestPollution(t *testing.T) {
@@ -309,6 +311,73 @@ func TestVerifyExportCounts_Drop(t *testing.T) {
 	}
 }
 
+func TestCommitAndPushJsonlBackup_RecoversStaleIndexLock(t *testing.T) {
+	gitRepo := t.TempDir()
+	initGitRepo(t, gitRepo)
+
+	dbDir := filepath.Join(gitRepo, "testdb")
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		t.Fatalf("mkdir testdb: %v", err)
+	}
+	writeNLines(t, filepath.Join(dbDir, "issues.jsonl"), 1)
+	commitAll(t, gitRepo, "baseline")
+	writeNLines(t, filepath.Join(dbDir, "issues.jsonl"), 2)
+
+	lockPath := filepath.Join(gitRepo, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, []byte{}, 0644); err != nil {
+		t.Fatalf("write stale lock: %v", err)
+	}
+	staleTime := time.Now().Add(-(staleGitIndexLockAge + time.Minute))
+	if err := os.Chtimes(lockPath, staleTime, staleTime); err != nil {
+		t.Fatalf("chtimes stale lock: %v", err)
+	}
+
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+	before := gitCommitCount(t, gitRepo)
+	if err := d.commitAndPushJsonlBackup(gitRepo, []string{"testdb"}, map[string]int{"testdb": 2}, nil); err != nil {
+		t.Fatalf("commitAndPushJsonlBackup with stale lock: %v", err)
+	}
+	after := gitCommitCount(t, gitRepo)
+	if after != before+1 {
+		t.Fatalf("expected one new commit after stale-lock recovery, got before=%d after=%d", before, after)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale lock to be removed, stat err=%v", err)
+	}
+}
+
+func TestCommitAndPushJsonlBackup_DoesNotRemoveFreshIndexLock(t *testing.T) {
+	gitRepo := t.TempDir()
+	initGitRepo(t, gitRepo)
+
+	dbDir := filepath.Join(gitRepo, "testdb")
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		t.Fatalf("mkdir testdb: %v", err)
+	}
+	writeNLines(t, filepath.Join(dbDir, "issues.jsonl"), 1)
+	commitAll(t, gitRepo, "baseline")
+	writeNLines(t, filepath.Join(dbDir, "issues.jsonl"), 2)
+
+	lockPath := filepath.Join(gitRepo, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, []byte{}, 0644); err != nil {
+		t.Fatalf("write fresh lock: %v", err)
+	}
+
+	d := &Daemon{logger: log.New(io.Discard, "", 0)}
+	before := gitCommitCount(t, gitRepo)
+	err := d.commitAndPushJsonlBackup(gitRepo, []string{"testdb"}, map[string]int{"testdb": 2}, nil)
+	if err == nil {
+		t.Fatal("expected fresh index.lock to block commit")
+	}
+	if _, statErr := os.Stat(lockPath); statErr != nil {
+		t.Fatalf("expected fresh lock to remain, stat err=%v", statErr)
+	}
+	after := gitCommitCount(t, gitRepo)
+	if after != before {
+		t.Fatalf("expected no new commit when fresh lock blocks backup, got before=%d after=%d", before, after)
+	}
+}
+
 func TestVerifyExportCounts_SmallAbsoluteChangeIgnored(t *testing.T) {
 	gitRepo := t.TempDir()
 	initGitRepo(t, gitRepo)
@@ -589,4 +658,20 @@ func writeNLines(t *testing.T, path string, n int) {
 
 func itoa(i int) string {
 	return strconv.Itoa(i)
+}
+
+func gitCommitCount(t *testing.T, dir string) int {
+	t.Helper()
+
+	cmd := exec.Command("git", "rev-list", "--count", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-list failed: %v: %s", err, out)
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatalf("parsing commit count %q: %v", out, err)
+	}
+	return count
 }
