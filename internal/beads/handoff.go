@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/lock"
@@ -177,8 +178,44 @@ func (b *Beads) lockBead(beadID string) (func(), error) {
 	return lock.FlockAcquire(lockPath)
 }
 
+func cloneAttachmentFields(fields *AttachmentFields) *AttachmentFields {
+	if fields == nil {
+		return &AttachmentFields{}
+	}
+
+	cloned := *fields
+	if len(fields.AttachedVars) > 0 {
+		cloned.AttachedVars = append([]string(nil), fields.AttachedVars...)
+	}
+	return &cloned
+}
+
+func normalizeFormulaAttachmentRef(ref string) string {
+	return strings.TrimSuffix(strings.TrimSpace(ref), ".formula.toml")
+}
+
+func isFormulaAttachmentRef(ref string) bool {
+	normalized := normalizeFormulaAttachmentRef(ref)
+	return normalized != "" && strings.HasPrefix(normalized, "mol-")
+}
+
+func buildAttachmentFields(existing *AttachmentFields, ref string) *AttachmentFields {
+	fields := cloneAttachmentFields(existing)
+	fields.AttachedAt = currentTimestamp()
+
+	if isFormulaAttachmentRef(ref) {
+		fields.AttachedFormula = normalizeFormulaAttachmentRef(ref)
+		fields.AttachedMolecule = ""
+		return fields
+	}
+
+	fields.AttachedMolecule = ref
+	return fields
+}
+
 // AttachMolecule attaches a molecule to a pinned bead by updating its description.
-// The moleculeID is the root issue ID of the molecule to attach.
+// Formula references like mol-witness-patrol are normalized into attached_formula
+// so legacy callers cannot reintroduce invalid attached_molecule state.
 // Uses advisory file locking to prevent concurrent read-modify-write races.
 // Returns the updated issue.
 func (b *Beads) AttachMolecule(pinnedBeadID, moleculeID string) (*Issue, error) {
@@ -200,11 +237,8 @@ func (b *Beads) AttachMolecule(pinnedBeadID, moleculeID string) (*Issue, error) 
 		return nil, fmt.Errorf("issue %s is not pinned (status: %s)", pinnedBeadID, issue.Status)
 	}
 
-	// Build attachment fields with current timestamp
-	fields := &AttachmentFields{
-		AttachedMolecule: moleculeID,
-		AttachedAt:       currentTimestamp(),
-	}
+	// Build attachment fields, preserving existing metadata.
+	fields := buildAttachmentFields(ParseAttachmentFields(issue), moleculeID)
 
 	// Update description with attachment fields
 	newDesc := SetAttachmentFields(issue, fields)

@@ -14,8 +14,8 @@ import (
 )
 
 // runMoleculeAttachFromMail handles the "gt mol attach-from-mail <mail-id>" command.
-// It reads a mail message, extracts the molecule ID from the body, and attaches
-// it to the current agent's hook (pinned bead).
+// It reads a mail message, extracts an attachment reference from the body, and
+// attaches it to the current agent's hook (pinned bead).
 func runMoleculeAttachFromMail(cmd *cobra.Command, args []string) error {
 	mailID := args[0]
 
@@ -65,10 +65,10 @@ func runMoleculeAttachFromMail(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading mail message: %w", err)
 	}
 
-	// Extract molecule ID from mail body
-	moleculeID := extractMoleculeIDFromMail(msg.Body)
-	if moleculeID == "" {
-		return fmt.Errorf("no attached_molecule field found in mail body")
+	// Extract attachment reference from mail body
+	attachmentRef := extractAttachmentRefFromMail(msg.Body)
+	if attachmentRef == "" {
+		return fmt.Errorf("no attached_molecule or attached_formula field found in mail body")
 	}
 
 	// Find local beads directory
@@ -96,16 +96,14 @@ func runMoleculeAttachFromMail(cmd *cobra.Command, args []string) error {
 	// Use the first pinned bead as the hook
 	hookBead := pinnedBeads[0]
 
-	// Check if molecule exists
-	_, err = b.Show(moleculeID)
-	if err != nil {
-		return fmt.Errorf("molecule %s not found: %w", moleculeID, err)
+	if err := validateAttachmentRef(b, attachmentRef); err != nil {
+		return err
 	}
 
-	// Attach the molecule to the hook
-	issue, err := b.AttachMolecule(hookBead.ID, moleculeID)
+	// Attach the reference to the hook
+	issue, err := b.AttachMolecule(hookBead.ID, attachmentRef)
 	if err != nil {
-		return fmt.Errorf("attaching molecule: %w", err)
+		return fmt.Errorf("attaching reference: %w", err)
 	}
 
 	// Mark mail as read
@@ -116,10 +114,23 @@ func runMoleculeAttachFromMail(cmd *cobra.Command, args []string) error {
 
 	// Output success
 	attachment := beads.ParseAttachmentFields(issue)
-	fmt.Printf("%s Attached molecule from mail\n", style.Bold.Render("✓"))
+	label := "Attachment"
+	value := attachmentRef
+	if attachment != nil {
+		switch {
+		case attachment.AttachedFormula != "" && attachment.AttachedMolecule == "":
+			label = "Formula"
+			value = attachment.AttachedFormula
+		case attachment.AttachedMolecule != "":
+			label = "Molecule"
+			value = attachment.AttachedMolecule
+		}
+	}
+
+	fmt.Printf("%s Attached %s from mail\n", style.Bold.Render("✓"), strings.ToLower(label))
 	fmt.Printf("  Mail: %s\n", mailID)
 	fmt.Printf("  Hook: %s\n", hookBead.ID)
-	fmt.Printf("  Molecule: %s\n", moleculeID)
+	fmt.Printf("  %s: %s\n", label, value)
 	if attachment != nil && attachment.AttachedAt != "" {
 		fmt.Printf("  Attached at: %s\n", attachment.AttachedAt)
 	}
@@ -128,17 +139,40 @@ func runMoleculeAttachFromMail(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// extractMoleculeIDFromMail extracts a molecule ID from a mail message body.
+// validateAttachmentRef verifies that an attachment reference points to either
+// a live molecule bead or an existing formula.
+func validateAttachmentRef(b *beads.Beads, ref string) error {
+	normalized := strings.TrimSuffix(strings.TrimSpace(ref), ".formula.toml")
+	if normalized == "" {
+		return fmt.Errorf("empty attachment reference")
+	}
+
+	if strings.HasPrefix(normalized, "mol-") {
+		if err := verifyFormulaExists(normalized); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if _, err := b.Show(ref); err != nil {
+		return fmt.Errorf("molecule %s not found: %w", ref, err)
+	}
+	return nil
+}
+
+// extractAttachmentRefFromMail extracts an attachment reference from a mail message body.
 // It looks for patterns like:
 //   - attached_molecule: <id>
+//   - attached_formula: <formula-name>
 //   - molecule_id: <id>
 //   - molecule: <id>
 //
 // The ID is expected to be on the same line after the colon.
-func extractMoleculeIDFromMail(body string) string {
-	// Try various patterns for molecule ID in mail body (case-insensitive)
+func extractAttachmentRefFromMail(body string) string {
+	// Try various patterns for attachment refs in the mail body (case-insensitive)
 	patterns := []string{
 		`(?i)attached_molecule:\s*(\S+)`,
+		`(?i)attached_formula:\s*(\S+)`,
 		`(?i)molecule_id:\s*(\S+)`,
 		`(?i)molecule:\s*(\S+)`,
 		`(?i)mol:\s*(\S+)`,

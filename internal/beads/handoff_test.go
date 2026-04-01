@@ -36,6 +36,54 @@ func TestStatusConstants(t *testing.T) {
 	}
 }
 
+func TestBuildAttachmentFieldsForFormulaReference(t *testing.T) {
+	existing := &AttachmentFields{
+		AttachedMolecule: "gt-wisp-old",
+		DispatchedBy:     "mayor",
+		AttachedVars:     []string{"mode=patrol"},
+	}
+
+	fields := buildAttachmentFields(existing, "mol-witness-patrol")
+	if fields.AttachedMolecule != "" {
+		t.Fatalf("AttachedMolecule = %q, want empty for formula refs", fields.AttachedMolecule)
+	}
+	if fields.AttachedFormula != "mol-witness-patrol" {
+		t.Fatalf("AttachedFormula = %q, want mol-witness-patrol", fields.AttachedFormula)
+	}
+	if fields.DispatchedBy != "mayor" {
+		t.Fatalf("DispatchedBy = %q, want mayor", fields.DispatchedBy)
+	}
+	if len(fields.AttachedVars) != 1 || fields.AttachedVars[0] != "mode=patrol" {
+		t.Fatalf("AttachedVars = %#v, want preserved vars", fields.AttachedVars)
+	}
+	if fields.AttachedAt == "" {
+		t.Fatal("AttachedAt should be populated")
+	}
+}
+
+func TestBuildAttachmentFieldsForMoleculePreservesFormula(t *testing.T) {
+	existing := &AttachmentFields{AttachedFormula: "mol-witness-patrol"}
+	fields := buildAttachmentFields(existing, "awt-wisp-123")
+	if fields.AttachedMolecule != "awt-wisp-123" {
+		t.Fatalf("AttachedMolecule = %q, want awt-wisp-123", fields.AttachedMolecule)
+	}
+	if fields.AttachedFormula != "mol-witness-patrol" {
+		t.Fatalf("AttachedFormula = %q, want preserved formula", fields.AttachedFormula)
+	}
+}
+
+func TestNormalizeFormulaAttachmentRef(t *testing.T) {
+	if got := normalizeFormulaAttachmentRef("mol-witness-patrol.formula.toml"); got != "mol-witness-patrol" {
+		t.Fatalf("normalizeFormulaAttachmentRef() = %q, want mol-witness-patrol", got)
+	}
+	if !isFormulaAttachmentRef("mol-witness-patrol") {
+		t.Fatal("isFormulaAttachmentRef should detect mol-witness-patrol")
+	}
+	if isFormulaAttachmentRef("awt-wisp-123") {
+		t.Fatal("isFormulaAttachmentRef should reject runtime wisp IDs")
+	}
+}
+
 func TestCurrentTimestamp(t *testing.T) {
 	ts := currentTimestamp()
 	if ts == "" {

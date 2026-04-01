@@ -2,7 +2,7 @@ package cmd
 
 import "testing"
 
-func TestExtractMoleculeIDFromMail(t *testing.T) {
+func TestExtractAttachmentRefFromMail(t *testing.T) {
 	tests := []struct {
 		name     string
 		body     string
@@ -17,6 +17,11 @@ func TestExtractMoleculeIDFromMail(t *testing.T) {
 			name:     "molecule_id field",
 			body:     "Work assignment:\nmolecule_id: mol-xyz789",
 			expected: "mol-xyz789",
+		},
+		{
+			name:     "attached_formula field",
+			body:     "Workflow assignment:\nattached_formula: mol-witness-patrol",
+			expected: "mol-witness-patrol",
 		},
 		{
 			name:     "molecule field",
@@ -54,7 +59,7 @@ func TestExtractMoleculeIDFromMail(t *testing.T) {
 			expected: "gt-case",
 		},
 		{
-			name:     "molecule in multiline context",
+			name: "molecule in multiline context",
 			body: `Subject: Work Assignment
 
 This is your next task.
@@ -71,9 +76,9 @@ Mayor`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractMoleculeIDFromMail(tt.body)
+			result := extractAttachmentRefFromMail(tt.body)
 			if result != tt.expected {
-				t.Errorf("extractMoleculeIDFromMail(%q) = %q, want %q", tt.body, result, tt.expected)
+				t.Errorf("extractAttachmentRefFromMail(%q) = %q, want %q", tt.body, result, tt.expected)
 			}
 		})
 	}

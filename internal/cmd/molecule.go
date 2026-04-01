@@ -6,10 +6,10 @@ import (
 
 // Molecule command flags
 var (
-	moleculeJSON      bool
-	moleculeJitter    string // jitter duration for squash (e.g. "10s")
-	moleculeSummary   string // optional summary for squash digest
-	moleculeNoDigest  bool   // skip digest bead creation on squash
+	moleculeJSON     bool
+	moleculeJitter   string // jitter duration for squash (e.g. "10s")
+	moleculeSummary  string // optional summary for squash digest
+	moleculeNoDigest bool   // skip digest bead creation on squash
 )
 
 var moleculeCmd = &cobra.Command{
@@ -43,7 +43,6 @@ TO DISPATCH WORK (with molecules):
   gt formulas               # List available formulas`,
 }
 
-
 var moleculeProgressCmd = &cobra.Command{
 	Use:   "progress <root-issue-id>",
 	Short: "Show progress through a molecule's steps",
@@ -63,19 +62,20 @@ Example:
 }
 
 var moleculeAttachCmd = &cobra.Command{
-	Use:   "attach [pinned-bead-id] <molecule-id>",
-	Short: "Attach a molecule to a pinned bead",
-	Long: `Attach a molecule to a pinned/handoff bead.
+	Use:   "attach [pinned-bead-id] <molecule-or-formula>",
+	Short: "Attach a molecule or formula to a pinned bead",
+	Long: `Attach a molecule or formula reference to a pinned/handoff bead.
 
-This records which molecule an agent is currently working on. The attachment
-is stored in the pinned bead's description and visible via 'bd show'.
+Runtime molecule IDs are stored in attached_molecule. Formula names like
+mol-witness-patrol are normalized into attached_formula so patrol hooks and
+inline workflow displays do not persist legacy invalid molecule pointers.
 
 When called with a single argument from an agent working directory, the
 pinned bead ID is auto-detected from the current agent's hook.
 
 Examples:
-  gt molecule attach gt-abc mol-xyz  # Explicit pinned bead
-  gt molecule attach mol-xyz         # Auto-detect from cwd`,
+  gt molecule attach gt-abc gt-wisp-xyz    # Explicit pinned bead + runtime molecule
+  gt molecule attach mol-witness-patrol    # Auto-detect from cwd, stores attached_formula`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: runMoleculeAttach,
 }
@@ -85,7 +85,7 @@ var moleculeDetachCmd = &cobra.Command{
 	Short: "Detach molecule from a pinned bead",
 	Long: `Remove molecule attachment from a pinned/handoff bead.
 
-This clears the attached_molecule and attached_at fields from the bead.
+This clears attached_molecule, attached_formula, and attached_at fields from the bead.
 
 Example:
   gt molecule detach gt-abc`,
@@ -96,7 +96,7 @@ Example:
 var moleculeAttachmentCmd = &cobra.Command{
 	Use:   "attachment <pinned-bead-id>",
 	Short: "Show attachment status of a pinned bead",
-	Long: `Show which molecule is attached to a pinned bead.
+	Long: `Show which molecule or formula is attached to a pinned bead.
 
 Example:
   gt molecule attachment gt-abc`,
@@ -106,19 +106,19 @@ Example:
 
 var moleculeAttachFromMailCmd = &cobra.Command{
 	Use:   "attach-from-mail <mail-id>",
-	Short: "Attach a molecule from a mail message",
-	Long: `Attach a molecule to the current agent's hook from a mail message.
+	Short: "Attach a molecule or formula from a mail message",
+	Long: `Attach a molecule or formula to the current agent's hook from a mail message.
 
-This command reads a mail message, extracts the molecule ID from the body,
+This command reads a mail message, extracts an attachment reference from the body,
 and attaches it to the agent's pinned bead (hook).
 
-The mail body should contain an "attached_molecule:" field with the molecule ID.
+The mail body should contain an "attached_molecule:" or "attached_formula:" field.
 
 Usage: gt mol attach-from-mail <mail-id>
 
 Behavior:
-1. Read mail body for attached_molecule field
-2. Attach molecule to agent's hook
+1. Read mail body for attached_molecule or attached_formula
+2. Attach the referenced molecule or formula to the agent's hook
 3. Mark mail as read
 4. Return control for execution
 
@@ -175,7 +175,6 @@ Examples:
 	RunE: runMoleculeCurrent,
 }
 
-
 var moleculeBurnCmd = &cobra.Command{
 	Use:   "burn [target]",
 	Short: "Burn current molecule without creating a digest",
@@ -226,7 +225,6 @@ When a polecat is working on a molecule, it processes one step at a time:
 IMPORTANT: Always use 'gt mol step done' to complete steps. Do not manually
 close steps with 'bd close' - that skips the auto-continuation logic.`,
 }
-
 
 func init() {
 	// Progress flags

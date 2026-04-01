@@ -78,7 +78,11 @@ func runMoleculeAttach(cmd *cobra.Command, args []string) error {
 	}
 
 	attachment := beads.ParseAttachmentFields(issue)
-	fmt.Printf("%s Attached %s to %s\n", style.Bold.Render("✓"), moleculeID, pinnedBeadID)
+	if attachment != nil && attachment.AttachedFormula != "" && attachment.AttachedMolecule == "" {
+		fmt.Printf("%s Attached formula %s to %s\n", style.Bold.Render("✓"), attachment.AttachedFormula, pinnedBeadID)
+	} else {
+		fmt.Printf("%s Attached %s to %s\n", style.Bold.Render("✓"), moleculeID, pinnedBeadID)
+	}
 	if attachment != nil && attachment.AttachedAt != "" {
 		fmt.Printf("  attached_at: %s\n", attachment.AttachedAt)
 	}
@@ -108,6 +112,9 @@ func runMoleculeDetach(cmd *cobra.Command, args []string) error {
 	}
 
 	previousMolecule := attachment.AttachedMolecule
+	if previousMolecule == "" {
+		previousMolecule = attachment.AttachedFormula
+	}
 
 	// Detach the molecule with audit logging
 	_, err = b.DetachMoleculeWithAudit(pinnedBeadID, beads.DetachOptions{
@@ -147,6 +154,7 @@ func runMoleculeAttachment(cmd *cobra.Command, args []string) error {
 			IssueTitle       string `json:"issue_title"`
 			Status           string `json:"status"`
 			AttachedMolecule string `json:"attached_molecule,omitempty"`
+			AttachedFormula  string `json:"attached_formula,omitempty"`
 			AttachedAt       string `json:"attached_at,omitempty"`
 		}
 		out := attachmentOutput{
@@ -156,6 +164,7 @@ func runMoleculeAttachment(cmd *cobra.Command, args []string) error {
 		}
 		if attachment != nil {
 			out.AttachedMolecule = attachment.AttachedMolecule
+			out.AttachedFormula = attachment.AttachedFormula
 			out.AttachedAt = attachment.AttachedAt
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -167,11 +176,17 @@ func runMoleculeAttachment(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n%s: %s\n", style.Bold.Render(issue.ID), issue.Title)
 	fmt.Printf("Status: %s\n", issue.Status)
 
-	if attachment == nil || attachment.AttachedMolecule == "" {
-		fmt.Printf("\n%s\n", style.Dim.Render("No molecule attached"))
+	if attachment == nil || (attachment.AttachedMolecule == "" && attachment.AttachedFormula == "") {
+		fmt.Printf("\n%s\n", style.Dim.Render("No molecule or formula attached"))
 	} else {
-		fmt.Printf("\n%s\n", style.Bold.Render("Attached Molecule:"))
-		fmt.Printf("  ID: %s\n", attachment.AttachedMolecule)
+		if attachment.AttachedMolecule != "" {
+			fmt.Printf("\n%s\n", style.Bold.Render("Attached Molecule:"))
+			fmt.Printf("  ID: %s\n", attachment.AttachedMolecule)
+		}
+		if attachment.AttachedFormula != "" {
+			fmt.Printf("\n%s\n", style.Bold.Render("Attached Formula:"))
+			fmt.Printf("  Name: %s\n", attachment.AttachedFormula)
+		}
 		if attachment.AttachedAt != "" {
 			fmt.Printf("  Attached at: %s\n", attachment.AttachedAt)
 		}
