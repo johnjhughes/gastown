@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -403,6 +404,35 @@ func TestDaemon_StopsManagerAndScanner(t *testing.T) {
 		// Success
 	case <-time.After(5 * time.Second):
 		t.Fatal("Stop() did not complete within 5s")
+	}
+}
+
+func TestRunReturnsErrAlreadyRunningWhenLockHeld(t *testing.T) {
+	t.Parallel()
+
+	townRoot := t.TempDir()
+	d, err := New(DefaultConfig(townRoot))
+	if err != nil {
+		t.Fatalf("New(DefaultConfig) error = %v", err)
+	}
+
+	lock := flock.New(filepath.Join(townRoot, "daemon", "daemon.lock"))
+	locked, err := lock.TryLock()
+	if err != nil {
+		t.Fatalf("TryLock() error = %v", err)
+	}
+	if !locked {
+		t.Fatal("expected test lock acquisition to succeed")
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	err = d.Run()
+	if !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("Run() error = %v, want ErrAlreadyRunning", err)
+	}
+
+	if _, statErr := os.Stat(d.config.PidFile); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no PID file on lock conflict, stat err = %v", statErr)
 	}
 }
 

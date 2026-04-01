@@ -247,6 +247,21 @@ func TestRenderMessage_Nudge(t *testing.T) {
 	}
 }
 
+func TestSystemdSupervisorRestartsOnFailureOnly(t *testing.T) {
+	content, err := supervisorFS.ReadFile("systemd/gastown-daemon.service")
+	if err != nil {
+		t.Fatalf("ReadFile(systemd/gastown-daemon.service) error = %v", err)
+	}
+
+	service := string(content)
+	if !strings.Contains(service, "Restart=on-failure") {
+		t.Fatal("systemd daemon service must only restart on failure")
+	}
+	if strings.Contains(service, "Restart=always") {
+		t.Fatal("systemd daemon service must not restart on clean idempotent exits")
+	}
+}
+
 func TestRenderRole_Dog(t *testing.T) {
 	tmpl, err := New()
 	if err != nil {

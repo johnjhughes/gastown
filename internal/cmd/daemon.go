@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -343,13 +344,37 @@ func runDaemonRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
+	// Supervisors may invoke `gt daemon run` when a healthy daemon is already
+	// holding the town lock. Treat that as idempotent success and exit before
+	// bootstrapping a second daemon instance or writing extra log noise.
+	running, _, err := daemon.IsRunning(townRoot)
+	if err != nil {
+		return fmt.Errorf("checking daemon status: %w", err)
+	}
+	if running {
+		return nil
+	}
+
 	config := daemon.DefaultConfig(townRoot)
 	d, err := daemon.New(config)
 	if err != nil {
 		return fmt.Errorf("creating daemon: %w", err)
 	}
 
-	return d.Run()
+	if err := d.Run(); err != nil {
+		if errors.Is(err, daemon.ErrAlreadyRunning) {
+			running, _, statusErr := daemon.IsRunning(townRoot)
+			if statusErr == nil && running {
+				return nil
+			}
+			if statusErr != nil {
+				return fmt.Errorf("checking daemon status after lock conflict: %w", statusErr)
+			}
+		}
+		return err
+	}
+
+	return nil
 }
 
 func runDaemonEnableSupervisor(cmd *cobra.Command, args []string) error {
