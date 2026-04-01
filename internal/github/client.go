@@ -72,7 +72,7 @@ func NewClient(opts ...Option) (*Client, error) {
 }
 
 // restRequest makes an authenticated REST API request and decodes the JSON response.
-func (c *Client) restRequest(ctx context.Context, method, path string, body any, result any) error {
+func (c *Client) restRequest(ctx context.Context, method, path string, body any, result any) (retErr error) {
 	var reqBody io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -98,7 +98,11 @@ func (c *Client) restRequest(ctx context.Context, method, path string, body any,
 	if err != nil {
 		return fmt.Errorf("github: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("github: close rest response body: %w", err)
+		}
+	}()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -123,7 +127,7 @@ func (c *Client) restRequest(ctx context.Context, method, path string, body any,
 }
 
 // graphqlRequest makes an authenticated GraphQL request.
-func (c *Client) graphqlRequest(ctx context.Context, query string, variables map[string]any, result any) error {
+func (c *Client) graphqlRequest(ctx context.Context, query string, variables map[string]any, result any) (retErr error) {
 	payload := map[string]any{
 		"query":     query,
 		"variables": variables,
@@ -144,7 +148,11 @@ func (c *Client) graphqlRequest(ctx context.Context, query string, variables map
 	if err != nil {
 		return fmt.Errorf("github: graphql: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("github: close graphql response body: %w", err)
+		}
+	}()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
