@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/formula"
 )
 
 // HookAttachmentValidCheck verifies that attached molecules exist and are not closed.
@@ -15,14 +16,26 @@ import (
 // closed issue, which can leave agents with stale work assignments.
 type HookAttachmentValidCheck struct {
 	FixableCheck
-	invalidAttachments []invalidAttachment
+	invalidAttachments       []invalidAttachment
+	legacyFormulaAttachments []legacyFormulaAttachment
 }
 
 type invalidAttachment struct {
-	pinnedBeadID   string
-	pinnedBeadDir  string // Directory where the pinned bead was found
-	moleculeID     string
-	reason         string // "not_found" or "closed"
+	pinnedBeadID  string
+	pinnedBeadDir string // Directory where the pinned bead was found
+	moleculeID    string
+	reason        string // "not_found" or "closed"
+}
+
+type legacyFormulaAttachment struct {
+	pinnedBeadID  string
+	pinnedBeadDir string // Directory where the pinned bead was found
+	formulaName   string
+}
+
+type hookAttachmentScanResult struct {
+	invalid []invalidAttachment
+	legacy  []legacyFormulaAttachment
 }
 
 // NewHookAttachmentValidCheck creates a new hook attachment validation check.
@@ -41,48 +54,66 @@ func NewHookAttachmentValidCheck() *HookAttachmentValidCheck {
 // Run checks all pinned beads for invalid molecule attachments.
 func (c *HookAttachmentValidCheck) Run(ctx *CheckContext) *CheckResult {
 	c.invalidAttachments = nil
+	c.legacyFormulaAttachments = nil
 
 	var details []string
 
 	// Check town-level beads
 	townBeadsDir := filepath.Join(ctx.TownRoot, ".beads")
-	townInvalid := c.checkBeadsDir(townBeadsDir, "town")
-	for _, inv := range townInvalid {
+	townScan := c.checkBeadsDir(townBeadsDir, ctx.TownRoot)
+	for _, inv := range townScan.invalid {
 		details = append(details, c.formatInvalid(inv))
 	}
-	c.invalidAttachments = append(c.invalidAttachments, townInvalid...)
+	for _, legacy := range townScan.legacy {
+		details = append(details, c.formatLegacyFormula(legacy))
+	}
+	c.invalidAttachments = append(c.invalidAttachments, townScan.invalid...)
+	c.legacyFormulaAttachments = append(c.legacyFormulaAttachments, townScan.legacy...)
 
 	// Check rig-level beads
 	rigDirs := c.findRigBeadsDirs(ctx.TownRoot)
 	for _, rigDir := range rigDirs {
-		rigName := filepath.Base(filepath.Dir(rigDir))
-		rigInvalid := c.checkBeadsDir(rigDir, rigName)
-		for _, inv := range rigInvalid {
+		rigScan := c.checkBeadsDir(rigDir, ctx.TownRoot)
+		for _, inv := range rigScan.invalid {
 			details = append(details, c.formatInvalid(inv))
 		}
-		c.invalidAttachments = append(c.invalidAttachments, rigInvalid...)
+		for _, legacy := range rigScan.legacy {
+			details = append(details, c.formatLegacyFormula(legacy))
+		}
+		c.invalidAttachments = append(c.invalidAttachments, rigScan.invalid...)
+		c.legacyFormulaAttachments = append(c.legacyFormulaAttachments, rigScan.legacy...)
 	}
 
-	if len(c.invalidAttachments) == 0 {
+	if len(c.invalidAttachments) > 0 {
 		return &CheckResult{
 			Name:    c.Name(),
-			Status:  StatusOK,
-			Message: "All hook attachments are valid",
+			Status:  StatusError,
+			Message: fmt.Sprintf("Found %d invalid hook attachment(s)", len(c.invalidAttachments)),
+			Details: details,
+			FixHint: "Run 'gt doctor --fix' to detach invalid molecules, or 'gt mol detach <pinned-bead-id>' manually",
+		}
+	}
+
+	if len(c.legacyFormulaAttachments) > 0 {
+		return &CheckResult{
+			Name:    c.Name(),
+			Status:  StatusWarning,
+			Message: fmt.Sprintf("Found %d legacy formula attachment(s)", len(c.legacyFormulaAttachments)),
+			Details: details,
+			FixHint: "Run 'gt doctor --fix' to migrate formula references from attached_molecule to attached_formula",
 		}
 	}
 
 	return &CheckResult{
 		Name:    c.Name(),
-		Status:  StatusError,
-		Message: fmt.Sprintf("Found %d invalid hook attachment(s)", len(c.invalidAttachments)),
-		Details: details,
-		FixHint: "Run 'gt doctor --fix' to detach invalid molecules, or 'gt mol detach <pinned-bead-id>' manually",
+		Status:  StatusOK,
+		Message: "All hook attachments are valid",
 	}
 }
 
 // checkBeadsDir checks all pinned beads in a directory for invalid attachments.
-func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, _ string) []invalidAttachment { // location unused but kept for future diagnostic output
-	var invalid []invalidAttachment
+func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, townRoot string) hookAttachmentScanResult {
+	var result hookAttachmentScanResult
 
 	b := beads.New(filepath.Dir(beadsDir))
 
@@ -93,7 +124,7 @@ func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, _ string) []invalidAt
 	})
 	if err != nil {
 		// Can't list pinned beads - silently skip this directory
-		return nil
+		return result
 	}
 
 	for _, pinnedBead := range pinnedBeads {
@@ -106,8 +137,20 @@ func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, _ string) []invalidAt
 		// Verify the attached molecule exists and is not closed
 		molecule, err := b.Show(attachment.AttachedMolecule)
 		if err != nil {
-			// Molecule not found
-			invalid = append(invalid, invalidAttachment{
+			// Legacy handoff beads sometimes persisted formula names in
+			// attached_molecule. Those are workflow references, not broken
+			// molecule pointers, and doctor should migrate rather than flag them
+			// as invalid missing issues.
+			if c.isFormulaReference(attachment.AttachedMolecule, beadsDir, townRoot) {
+				result.legacy = append(result.legacy, legacyFormulaAttachment{
+					pinnedBeadID:  pinnedBead.ID,
+					pinnedBeadDir: beadsDir,
+					formulaName:   normalizeFormulaName(attachment.AttachedMolecule),
+				})
+				continue
+			}
+
+			result.invalid = append(result.invalid, invalidAttachment{
 				pinnedBeadID:  pinnedBead.ID,
 				pinnedBeadDir: beadsDir,
 				moleculeID:    attachment.AttachedMolecule,
@@ -117,7 +160,7 @@ func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, _ string) []invalidAt
 		}
 
 		if molecule.Status == "closed" {
-			invalid = append(invalid, invalidAttachment{
+			result.invalid = append(result.invalid, invalidAttachment{
 				pinnedBeadID:  pinnedBead.ID,
 				pinnedBeadDir: beadsDir,
 				moleculeID:    attachment.AttachedMolecule,
@@ -126,7 +169,7 @@ func (c *HookAttachmentValidCheck) checkBeadsDir(beadsDir, _ string) []invalidAt
 		}
 	}
 
-	return invalid
+	return result
 }
 
 // findRigBeadsDirs finds all rig-level .beads directories.
@@ -168,6 +211,64 @@ func (c *HookAttachmentValidCheck) formatInvalid(inv invalidAttachment) string {
 	return fmt.Sprintf("%s: attached molecule %s %s", inv.pinnedBeadID, inv.moleculeID, reasonText)
 }
 
+func (c *HookAttachmentValidCheck) formatLegacyFormula(legacy legacyFormulaAttachment) string {
+	return fmt.Sprintf("%s: formula %s stored in attached_molecule (legacy format)",
+		legacy.pinnedBeadID, legacy.formulaName)
+}
+
+func (c *HookAttachmentValidCheck) isFormulaReference(name, beadsDir, townRoot string) bool {
+	normalized := normalizeFormulaName(name)
+	if normalized == "" {
+		return false
+	}
+
+	if _, err := formula.GetEmbeddedFormulaContent(normalized); err == nil {
+		return true
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	searchDirs := []string{
+		filepath.Join(filepath.Dir(beadsDir), ".beads", "formulas"),
+		filepath.Join(townRoot, ".beads", "formulas"),
+	}
+	if homeDir != "" {
+		searchDirs = append(searchDirs, filepath.Join(homeDir, ".beads", "formulas"))
+	}
+
+	filename := normalized + ".formula.toml"
+	for _, dir := range searchDirs {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, filename)); err == nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeFormulaName(name string) string {
+	return strings.TrimSuffix(name, ".formula.toml")
+}
+
+func migrateLegacyFormulaAttachmentFields(issue *beads.Issue, formulaName string) string {
+	fields := beads.ParseAttachmentFields(issue)
+	if fields == nil {
+		fields = &beads.AttachmentFields{}
+	}
+
+	normalized := normalizeFormulaName(formulaName)
+	if fields.AttachedFormula == "" {
+		fields.AttachedFormula = normalized
+	}
+	if normalizeFormulaName(fields.AttachedMolecule) == normalized {
+		fields.AttachedMolecule = ""
+	}
+
+	return beads.SetAttachmentFields(issue, fields)
+}
+
 // Fix detaches all invalid molecule attachments.
 func (c *HookAttachmentValidCheck) Fix(ctx *CheckContext) error {
 	var errors []string
@@ -178,6 +279,21 @@ func (c *HookAttachmentValidCheck) Fix(ctx *CheckContext) error {
 		_, err := b.DetachMolecule(inv.pinnedBeadID)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("failed to detach from %s: %v", inv.pinnedBeadID, err))
+		}
+	}
+
+	for _, legacy := range c.legacyFormulaAttachments {
+		b := beads.New(filepath.Dir(legacy.pinnedBeadDir))
+
+		issue, err := b.Show(legacy.pinnedBeadID)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("failed to load %s for formula migration: %v", legacy.pinnedBeadID, err))
+			continue
+		}
+
+		newDesc := migrateLegacyFormulaAttachmentFields(issue, legacy.formulaName)
+		if err := b.Update(legacy.pinnedBeadID, beads.UpdateOptions{Description: &newDesc}); err != nil {
+			errors = append(errors, fmt.Sprintf("failed to migrate formula attachment on %s: %v", legacy.pinnedBeadID, err))
 		}
 	}
 
@@ -196,9 +312,9 @@ type HookSingletonCheck struct {
 }
 
 type duplicateHandoff struct {
-	title     string
-	beadsDir  string
-	beadIDs   []string // All IDs with this title (first one is kept, rest are duplicates)
+	title    string
+	beadsDir string
+	beadIDs  []string // All IDs with this title (first one is kept, rest are duplicates)
 }
 
 // NewHookSingletonCheck creates a new hook singleton check.

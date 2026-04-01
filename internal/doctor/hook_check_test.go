@@ -3,7 +3,10 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 func TestNewHookAttachmentValidCheck(t *testing.T) {
@@ -85,6 +88,57 @@ func TestHookAttachmentValidCheck_FormatInvalid(t *testing.T) {
 		if result != tt.expected {
 			t.Errorf("formatInvalid() = %q, want %q", result, tt.expected)
 		}
+	}
+}
+
+func TestHookAttachmentValidCheck_IsFormulaReferenceEmbedded(t *testing.T) {
+	check := NewHookAttachmentValidCheck()
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+
+	if !check.isFormulaReference("mol-witness-patrol", beadsDir, tmpDir) {
+		t.Fatal("expected embedded patrol formula to be recognized")
+	}
+	if check.isFormulaReference("mol-not-a-real-formula", beadsDir, tmpDir) {
+		t.Fatal("unexpectedly recognized nonexistent formula")
+	}
+}
+
+func TestHookAttachmentValidCheck_IsFormulaReferenceProjectFormula(t *testing.T) {
+	check := NewHookAttachmentValidCheck()
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, "awt", ".beads")
+	formulasDir := filepath.Join(beadsDir, "formulas")
+	if err := os.MkdirAll(formulasDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	formulaPath := filepath.Join(formulasDir, "mol-local-check.formula.toml")
+	if err := os.WriteFile(formulaPath, []byte("formula = 'mol-local-check'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !check.isFormulaReference("mol-local-check", beadsDir, tmpDir) {
+		t.Fatal("expected project formula to be recognized")
+	}
+}
+
+func TestMigrateLegacyFormulaAttachmentFields(t *testing.T) {
+	issue := &beads.Issue{
+		Description: "attached_molecule: mol-witness-patrol\nattached_at: 2026-04-01T16:38:11Z\n\nKeep this text.",
+	}
+
+	got := migrateLegacyFormulaAttachmentFields(issue, "mol-witness-patrol")
+	if strings.Contains(got, "attached_molecule:") {
+		t.Fatalf("legacy migration left attached_molecule behind:\n%s", got)
+	}
+	if !strings.Contains(got, "attached_formula: mol-witness-patrol") {
+		t.Fatalf("legacy migration did not write attached_formula:\n%s", got)
+	}
+	if !strings.Contains(got, "attached_at: 2026-04-01T16:38:11Z") {
+		t.Fatalf("legacy migration did not preserve attached_at:\n%s", got)
+	}
+	if !strings.Contains(got, "Keep this text.") {
+		t.Fatalf("legacy migration did not preserve freeform description text:\n%s", got)
 	}
 }
 
