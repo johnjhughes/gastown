@@ -2650,10 +2650,12 @@ func RemoveDatabase(townRoot, dbName string, force bool) error {
 
 	// Safety check: if DB has real data and force is not set, refuse. (gt-q8f6n)
 	// This prevents destroying legitimate databases that happen to be unreferenced.
+	// Empty schema tables do not count as user data, and the Beads config table is
+	// bootstrap metadata rather than user work.
 	running, _, _ := IsRunning(townRoot)
 	if running && !force {
-		if hasData, _ := databaseHasUserTables(townRoot, dbName); hasData {
-			return fmt.Errorf("database %q has user tables — use --force to remove", dbName)
+		if hasData, _ := databaseHasUserData(townRoot, dbName); hasData {
+			return fmt.Errorf("database %q has user data — use --force to remove", dbName)
 		}
 	}
 
@@ -2684,9 +2686,10 @@ func RemoveDatabase(townRoot, dbName string, force bool) error {
 	return nil
 }
 
-// databaseHasUserTables checks if a database has tables beyond Dolt system tables.
-// Returns (true, nil) if user tables exist, (false, nil) if only system tables or empty.
-func databaseHasUserTables(townRoot, dbName string) (bool, error) {
+// databaseHasUserData checks whether a database contains real user data.
+// Empty schema tables do not count, and the Beads config table is treated as
+// bootstrap metadata rather than user work.
+func databaseHasUserData(townRoot, dbName string) (bool, error) {
 	config := DefaultConfig(townRoot)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2698,18 +2701,74 @@ func databaseHasUserTables(townRoot, dbName string) (bool, error) {
 		return false, err
 	}
 
-	// Parse output — each line is a table name. Skip Dolt system tables.
+	tableCounts := make(map[string]int64)
 	for _, line := range strings.Split(string(output), "\n") {
 		table := strings.TrimSpace(line)
 		if table == "" || table == "Tables_in_"+dbName || table == "Table" {
 			continue
 		}
-		// Dolt system tables start with "dolt_"
-		if !strings.HasPrefix(table, "dolt_") {
-			return true, nil
+
+		count, err := queryDatabaseTableRowCount(config, dbName, table)
+		if err != nil {
+			return false, err
+		}
+		tableCounts[table] = count
+	}
+
+	return databaseCountsContainUserData(tableCounts), nil
+}
+
+func queryDatabaseTableRowCount(config *Config, dbName, table string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	query := fmt.Sprintf("USE `%s`; SELECT COUNT(*) FROM `%s`", dbName, table)
+	cmd := buildDoltSQLCmd(ctx, config, "-r", "csv", "-q", query)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, err
+	}
+
+	return parseCSVCount(output)
+}
+
+func parseCSVCount(output []byte) (int64, error) {
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) < 2 {
+		return 0, fmt.Errorf("unexpected COUNT(*) output: %q", strings.TrimSpace(string(output)))
+	}
+
+	value := strings.TrimSpace(lines[len(lines)-1])
+	count, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parsing COUNT(*) output %q: %w", value, err)
+	}
+	return count, nil
+}
+
+func databaseCountsContainUserData(tableCounts map[string]int64) bool {
+	for table, count := range tableCounts {
+		if tableShouldBeIgnoredForOrphanCheck(table) {
+			continue
+		}
+		if count > 0 {
+			return true
 		}
 	}
-	return false, nil
+	return false
+}
+
+func tableShouldBeIgnoredForOrphanCheck(table string) bool {
+	if strings.HasPrefix(table, "dolt_") {
+		return true
+	}
+
+	switch table {
+	case "config":
+		return true
+	default:
+		return false
+	}
 }
 
 // FindBrokenWorkspaces scans all rig metadata.json files for Dolt server

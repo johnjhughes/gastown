@@ -3254,6 +3254,66 @@ func TestRemoveDatabase_ErrorOnMissing(t *testing.T) {
 	}
 }
 
+func TestDatabaseCountsContainUserData(t *testing.T) {
+	tests := []struct {
+		name   string
+		counts map[string]int64
+		want   bool
+	}{
+		{
+			name:   "config only is bootstrap metadata",
+			counts: map[string]int64{"config": 10},
+			want:   false,
+		},
+		{
+			name:   "empty user tables are safe",
+			counts: map[string]int64{"config": 10, "issues": 0, "events": 0},
+			want:   false,
+		},
+		{
+			name:   "dolt tables are ignored",
+			counts: map[string]int64{"dolt_log": 99},
+			want:   false,
+		},
+		{
+			name:   "issues rows count as user data",
+			counts: map[string]int64{"config": 10, "issues": 1},
+			want:   true,
+		},
+		{
+			name:   "wisps rows count as user data",
+			counts: map[string]int64{"wisps": 2},
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := databaseCountsContainUserData(tt.counts); got != tt.want {
+				t.Fatalf("databaseCountsContainUserData(%v) = %v, want %v", tt.counts, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTableShouldBeIgnoredForOrphanCheck(t *testing.T) {
+	tests := []struct {
+		table string
+		want  bool
+	}{
+		{table: "config", want: true},
+		{table: "dolt_log", want: true},
+		{table: "issues", want: false},
+		{table: "metadata", want: false},
+	}
+
+	for _, tt := range tests {
+		if got := tableShouldBeIgnoredForOrphanCheck(tt.table); got != tt.want {
+			t.Fatalf("tableShouldBeIgnoredForOrphanCheck(%q) = %v, want %v", tt.table, got, tt.want)
+		}
+	}
+}
+
 func TestListDatabases_OnlyIncludesDoltDirs(t *testing.T) {
 	townRoot := t.TempDir()
 	dataDir := filepath.Join(townRoot, ".dolt-data")
