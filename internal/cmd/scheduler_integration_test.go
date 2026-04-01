@@ -45,7 +45,7 @@ func initBeadsDBForServer(t *testing.T, dir, prefix string) {
 	// Forward GT_DOLT_PORT so bd connects to the ephemeral test server
 	// instead of defaulting to port 3307.
 	if p := os.Getenv("GT_DOLT_PORT"); p != "" {
-		args = append(args, "--server-port", p)
+		args = append(args, "--server", "--server-port", p)
 	}
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir

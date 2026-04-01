@@ -7,14 +7,17 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	gtbeads "github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/scheduler/capacity"
 	"github.com/steveyegge/gastown/internal/testutil"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // --- Environment helpers ---
@@ -227,8 +230,45 @@ func addBeadDependencyOfType(t *testing.T, from, to, depType, dir string) {
 	cmd := exec.Command("bd", "dep", "add", from, to, "--type="+depType)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if gtbeads.ExtractPrefix(from) != gtbeads.ExtractPrefix(to) {
+			if fallbackErr := addCrossPrefixDependencyViaExternalRef(from, to, depType, dir); fallbackErr == nil {
+				return
+			} else {
+				t.Fatalf(
+					"bd dep add %s %s --type=%s failed: %v\n%s\nfallback add failed: %v",
+					from,
+					to,
+					depType,
+					err,
+					out,
+					fallbackErr,
+				)
+			}
+		}
 		t.Fatalf("bd dep add %s %s --type=%s failed: %v\n%s", from, to, depType, err, out)
 	}
+}
+
+// addCrossPrefixDependencyViaExternalRef retries the dep add with an explicit
+// external:<rig>:<id> target. Newer bd builds no longer synthesize this form
+// from a foreign bead ID during dep add, but they still accept it directly.
+func addCrossPrefixDependencyViaExternalRef(from, to, depType, dir string) error {
+	townRoot, err := workspace.FindOrError(dir)
+	if err != nil {
+		return fmt.Errorf("find town root: %w", err)
+	}
+
+	targetRig := gtbeads.GetRigNameForPrefix(townRoot, gtbeads.ExtractPrefix(to))
+	if targetRig == "" {
+		return fmt.Errorf("no rig route found for %s", to)
+	}
+
+	cmd := exec.Command("bd", "dep", "add", from, "external:"+targetRig+":"+to, "--type="+depType)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("bd dep add with external ref failed: %w\n%s", err, out)
+	}
+	return nil
 }
 
 // createTestBeadOfType creates a bead with the given title and issue type (e.g.,
