@@ -411,10 +411,14 @@ func TestRunReturnsErrAlreadyRunningWhenLockHeld(t *testing.T) {
 	t.Parallel()
 
 	townRoot := t.TempDir()
-	d, err := New(DefaultConfig(townRoot))
-	if err != nil {
-		t.Fatalf("New(DefaultConfig) error = %v", err)
+	daemonDir := filepath.Join(townRoot, "daemon")
+	if err := os.MkdirAll(daemonDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(daemon) error = %v", err)
 	}
+
+	config := DefaultConfig(townRoot)
+	// Avoid daemon.New() here: it mutates the live tmux global GT_TOWN_ROOT.
+	d := &Daemon{config: config, logger: log.New(io.Discard, "", 0)}
 
 	lock := flock.New(filepath.Join(townRoot, "daemon", "daemon.lock"))
 	locked, err := lock.TryLock()
