@@ -303,11 +303,10 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	// server is momentarily unreachable (restart, journal hiccup), bd's
 	// auto-start tries to launch a shadow server in the agent's .beads/dolt/
 	// directory — which conflicts with the real server on the same port and
-	// triggers an escalation flood loop. Dogs are especially affected because
-	// their kennel's .beads/ has no explicit dolt_server_port in metadata.json.
-	if cfg.TownRoot != "" {
-		env["BEADS_DOLT_AUTO_START"] = "0"
-	}
+	// triggers an escalation flood loop. This must apply even when TownRoot is
+	// unavailable, because AgentEnv already propagates Dolt connection info from
+	// process env for those startup paths.
+	env["BEADS_DOLT_AUTO_START"] = "0"
 
 	// Propagate Dolt server host so bd doesn't fall back to 127.0.0.1 when
 	// the server runs on a remote machine (e.g., mini2 over Tailscale).
